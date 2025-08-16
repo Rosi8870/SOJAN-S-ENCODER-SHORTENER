@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOJAN'S ENCODING SHORTENER</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: "Inter", sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+    <div class="bg-white p-8 rounded-lg shadow-lg max-w-2xl w-full">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">📸 SOJAN'S ENCODING SHORTENER</h1>
+        <p class="text-gray-600 mb-6 text-center">
+            HAPPY PRIVACY
+            <span class="font-semibold text-blue-700 block mt-2" id="userIdDisplay">User ID: Loading...</span>
+        </p>
+
+        <div class="mb-6">
+            <label for="longCode" class="block text-gray-700 text-sm font-semibold mb-2">Original or Short Tag:</label>
+            <textarea
+                id="longCode"
+                placeholder='Paste your <img> tag here (e.g., <img src="data:image/png;base64,..." alt="description"> or <img src="https://example.com/image.jpg">)'
+                class="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200 resize-y min-h-[150px]"></textarea>
+        </div>
+
+        <div id="loadingIndicator" class="hidden text-center text-blue-600 font-semibold mb-4">
+            Processing... Please wait.
+        </div>
+
+        <button
+            onclick="shortenCode()"
+            class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-md shadow-md hover:shadow-lg transition duration-300 transform hover:scale-105 mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75">
+            Shorten Code
+        </button>
+        <button
+            onclick="restoreOriginalCode()"
+            class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-md shadow-md hover:shadow-lg transition duration-300 transform hover:scale-105 mb-6 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-75">
+            Restore Original Tag
+        </button>
+
+        <div>
+            <label for="shortCode" class="block text-gray-700 text-sm font-semibold mb-2">Resulting Tag:</label>
+            <textarea
+                id="shortCode"
+                readonly
+                class="w-full p-3 border border-gray-300 rounded-md bg-gray-50 focus:outline-none resize-y min-h-[100px]"></textarea>
+            <button
+                onclick="copyToClipboard()"
+                class="mt-4 w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-md shadow-md hover:shadow-lg transition duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75">
+                Copy Result to Clipboard
+            </button>
+        </div>
+
+        <div id="messageBox" class="mt-4 p-3 rounded-md text-center hidden"></div>
+    </div>
+
+    <script type="module">
+        // Firebase imports from CDN
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, collection } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js";
+
+        let app;
+        let db;
+        let auth;
+        let userId; // To store the authenticated user's ID
+        // Mandatory: __app_id is provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        let firebaseInitializedPromise; // Promise to track Firebase initialization readiness
+
+        /**
+         * Initializes Firebase and authenticates the user.
+         * This function returns a Promise that resolves when Firebase and auth are ready.
+         */
+        function initializeFirebase() {
+            firebaseInitializedPromise = new Promise(async (resolve, reject) => {
+                try {
+                    // Mandatory: __firebase_config is provided by the Canvas environment
+                    // Reverted to use __firebase_config for security and correct Canvas integration.
+                const firebaseConfig = {
+                    apiKey: "AIzaSyAepkNSEviF1IjSRnyGfEoFKtY99hd-DPs",
+                    authDomain: "storagede.firebaseapp.com",
+                    projectId: "storagede",
+                    storageBucket: "storagede.firebasestorage.app",
+                    messagingSenderId: "67412993932",
+                    appId: "1:67412993932:web:963501ab50bc9074b158a9",
+                    measurementId: "G-K3HWSCJBP6"
+                };
+
+                    if (Object.keys(firebaseConfig).length === 0) {
+                        console.error("Firebase config is missing. Cannot initialize Firebase.");
+                        showMessage('Firebase configuration missing. Cannot save/load data.', 'error');
+                        reject('Firebase config missing');
+                        return;
+                    }
+
+                    // Initialize Firebase app
+                    app = initializeApp(firebaseConfig);
+                    db = getFirestore(app);
+                    auth = getAuth(app);
+
+                    // Sign in using the custom token provided by the Canvas environment, or anonymously as a fallback
+                    // Mandatory: __initial_auth_token is provided by the Canvas environment
+                    if (typeof __initial_auth_token !== 'undefined') {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+
+                    // Listen for authentication state changes to get the user ID
+                    const unsubscribe = onAuthStateChanged(auth, (user) => {
+                        if (user) {
+                            userId = user.uid;
+                            document.getElementById('userIdDisplay').textContent = `User ID: ${userId}`;
+                            showMessage('Paste full code in the top box and click Shorten Code.', 'success');
+                        } else {
+                            // Fallback: if somehow not signed in, generate a random ID
+                            userId = crypto.randomUUID(); // Generate a random ID for unauthenticated users
+                            document.getElementById('userIdDisplay').textContent = `User ID: ${userId} (Anonymous)`;
+                            showMessage('Signed in anonymously to Firebase. Data persistence is enabled.', 'info');
+                        }
+                        unsubscribe(); // Stop listening after the first state change, as user ID won't change often
+                        resolve(); // Resolve the promise once Firebase and auth are fully set up
+                    });
+
+                } catch (error) {
+                    console.error("Error initializing Firebase:", error);
+                    showMessage('Error initializing Firebase. Data persistence may not work.', 'error');
+                    reject(error);
+                }
+            });
+        }
+
+        // Call Firebase initialization when the window loads
+        window.onload = initializeFirebase;
+
+        /**
+         * Shows or hides the loading indicator.
+         * @param {boolean} show - True to show, false to hide.
+         */
+        function showLoading(show) {
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            if (show) {
+                loadingIndicator.classList.remove('hidden');
+            } else {
+                loadingIndicator.classList.add('hidden');
+            }
+        }
+
+        /**
+         * Generates a short, unique ID for storing in Firestore.
+         */
+        function generateShortId() {
+            // Using a simple prefix and a random string for uniqueness
+            return 'img-' + Math.random().toString(36).substring(2, 8);
+        }
+
+        /**
+         * Shortens an HTML <img> tag.
+         * If the 'src' is a Base64 string, it stores it in Firestore and replaces it with a short, unique ID.
+         * For regular URLs, it extracts just the 'src' attribute.
+         */
+        window.shortenCode = async function() { // Make function globally accessible
+            // Ensure Firebase is initialized and ready before performing database operations
+            try {
+                await firebaseInitializedPromise;
+            } catch (err) {
+                showMessage('Firebase initialization failed. Cannot perform operation.', 'error');
+                console.error("Firebase not ready for shortenCode:", err);
+                return;
+            }
+
+            const longTag = document.getElementById('longCode').value.trim();
+            const messageBox = document.getElementById('messageBox');
+            messageBox.classList.add('hidden');
+            messageBox.textContent = '';
+            document.getElementById('shortCode').value = '';
+
+            if (!longTag) {
+                showMessage('Please paste an <img> tag into the input area.', 'error');
+                return;
+            }
+
+            showLoading(true);
+            try {
+                const parser = new DOMParser();
+                const docHtml = parser.parseFromString(longTag, 'text/html');
+                const imgTag = docHtml.querySelector('img');
+
+                if (imgTag) {
+                    const src = imgTag.getAttribute('src');
+                    const alt = imgTag.getAttribute('alt') || ''; // Get alt attribute, default to empty string if not present
+
+                    if (src) {
+                        let shortSrc = src;
+                        let message = 'Code shortened successfully!';
+                        let messageType = 'success';
+
+                        // Check if the src is a Base64 data URI
+                        if (src.startsWith('data:')) {
+                            const shortId = generateShortId();
+                            // Construct the document reference using multiple arguments for segments
+                            // Path: /artifacts/{appId}/public/data/images/{shortId}
+                            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'images', shortId);
+
+                            await setDoc(docRef, { // Set doc directly using the path
+                                base64Data: src,
+                                altDescription: alt, // Store the alt description
+                                createdAt: new Date().toISOString(),
+                                shortenedBy: userId // Store the user ID for traceability
+                            });
+
+                            shortSrc = shortId; // Use the short ID as the new src
+                            message = `Base64 'src' detected and stored in the database (with alt text).
+                                        You can now use this short ID across sessions/devices.`;
+                            messageType = 'info';
+                        }
+
+                        // For regular URLs, we also only keep src, as alt is not "shortened" anyway.
+                        // However, we still capture it in the restored version if it exists.
+                        const shortTag = `<img src="${shortSrc}">`;
+                        document.getElementById('shortCode').value = shortTag;
+                        showMessage(message, messageType);
+
+                    } else {
+                        showMessage("No 'src' attribute found in the provided <img> tag.", 'error');
+                    }
+                } else {
+                    showMessage("Invalid HTML: Please provide a valid <img> tag to shorten.", 'error');
+                }
+            } catch (error) {
+                showMessage("An error occurred. Check console for details.", 'error');
+                console.error("Shortening error:", error);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        /**
+         * Restores the original full Base64 tag from a short ID by fetching from Firestore.
+         */
+        window.restoreOriginalCode = async function() { // Make function globally accessible
+            // Ensure Firebase is initialized and ready before performing database operations
+            try {
+                await firebaseInitializedPromise;
+            } catch (err) {
+                showMessage('Firebase initialization failed. Cannot perform operation.', 'error');
+                console.error("Firebase not ready for restoreOriginalCode:", err);
+                return;
+            }
+
+            const shortTagInput = document.getElementById('longCode').value.trim();
+            const messageBox = document.getElementById('messageBox');
+            messageBox.classList.add('hidden');
+            messageBox.textContent = '';
+            document.getElementById('shortCode').value = '';
+
+            if (!shortTagInput) {
+                showMessage('Please paste a short <img> tag (with an ID) into the input area to restore.', 'error');
+                return;
+            }
+
+            showLoading(true);
+            try {
+                const parser = new DOMParser();
+                const docHtml = parser.parseFromString(shortTagInput, 'text/html');
+                const imgTag = docHtml.querySelector('img');
+
+                if (imgTag) {
+                    const shortId = imgTag.getAttribute('src');
+                    // Ensure the ID looks like a generated short ID, not a regular URL
+                    if (!shortId || !shortId.startsWith('img-')) {
+                         showMessage(`This doesn't look like a short ID generated by this tool. Expected 'img-xxxxxx'.`, 'error');
+                         return;
+                    }
+
+                    // Construct the document reference using multiple arguments for segments
+                    // Path: /artifacts/{appId}/public/data/images/{shortId}
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'images', shortId);
+                    const docSnap = await getDoc(docRef);
+
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        const originalBase64 = data.base64Data;
+                        const originalAlt = data.altDescription || ''; // Retrieve alt description, default to empty
+
+                        // Reconstruct the tag including the alt attribute if it exists
+                        const restoredTag = `<img src="${originalBase64}"${originalAlt ? ` alt="${originalAlt}"` : ''}>`;
+                        document.getElementById('shortCode').value = restoredTag;
+                        console.log("Restored tag set in textarea with length:", restoredTag.length);
+                        showMessage('PASTE IT IN SOJANS ENCODING WEBSITE', 'success'); // Changed message here
+                    } else {
+                        showMessage(`No original Base64 image found for ID: "${shortId}" in the database. It might be invalid or deleted.`, 'error');
+                    }
+                } else {
+                    showMessage("Invalid HTML: Please provide a valid <img> tag with a short ID to restore.", 'error');
+                }
+            } catch (error) {
+                showMessage("An error occurred. Check console for details.", 'error');
+                console.error("Restoring error:", error);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        /**
+         * Copies the content of the resulting code textarea to the clipboard.
+         */
+        window.copyToClipboard = function() { // Make function globally accessible
+            const shortCodeTextArea = document.getElementById('shortCode');
+            if (shortCodeTextArea.value) {
+                console.log("Attempting to copy value from textarea with length:", shortCodeTextArea.value.length);
+                shortCodeTextArea.select();
+                // Use the actual length of the value for selection range
+                shortCodeTextArea.setSelectionRange(0, shortCodeTextArea.value.length);
+
+                try {
+                    const successful = document.execCommand('copy');
+                    if (successful) {
+                        showMessage('Copied to clipboard!', 'success');
+                        console.log("Copy successful.");
+                    } else {
+                        showMessage('Failed to copy. Please copy manually.', 'error');
+                        console.log("Copy failed: execCommand returned false.");
+                    }
+                } catch (err) {
+                    showMessage('Error copying to clipboard.', 'error');
+                    console.error('Copy command failed:', err);
+                }
+            } else {
+                showMessage('Nothing to copy.', 'info');
+            }
+        }
+
+        /**
+         * Displays a message in the message box.
+         * @param {string} message - The message to display.
+         * @param {'success'|'error'|'info'} type - The type of message (influences styling).
+         */
+        function showMessage(message, type) {
+            const messageBox = document.getElementById('messageBox');
+            messageBox.textContent = message;
+            messageBox.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800', 'bg-blue-100', 'text-blue-800');
+
+            if (type === 'success') {
+                messageBox.classList.add('bg-green-100', 'text-green-800');
+            } else if (type === 'error') {
+                messageBox.classList.add('bg-red-100', 'text-red-800');
+            } else if (type === 'info') {
+                messageBox.classList.add('bg-blue-100', 'text-blue-800');
+            }
+            messageBox.classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
